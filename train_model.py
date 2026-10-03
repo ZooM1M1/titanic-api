@@ -1,42 +1,65 @@
+import os
 import pandas as pd
 import joblib
 
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.linear_model import LogisticRegression
 
+# 1. Загрузка данных
 url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
 df = pd.read_csv(url)
 
-df["Title"] = df['Name'].str.extract(r' ([A-Za-z]+)\.')
-common_titles = ["Mr", 'Miss', 'Mrs', 'Master']
-df['Title'] = df['Title'].where(df['Title'].isin(common_titles), 'Rare')
+# 2. Создаем производные признаки (Feature Engineering)
+df["Title"] = df["Name"].str.extract(r" ([A-Za-z]+)\.")
+common_titles = ["Mr", "Miss", "Mrs", "Master"]
+df["Title"] = df["Title"].where(df["Title"].isin(common_titles), "Rare")
 
-df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
-df['IsAlone'] = (df['FamilySize'] == 1).astype(int)
+df["FamilySize"] = df["SibSp"] + df["Parch"] + 1
+df["IsAlone"] = (df["FamilySize"] == 1).astype(int)
 
-df['Age'] = df['Age'].fillna(df['Age'].median())
-df['Embarked'] = df['Embarked'].fillna(df['Embarked'].mode()[0])
+# 3. Отбираем сырые колонки (обрати внимание: НИКАКОГО fillna и get_dummies вручную!)
+features = ["Pclass", "Sex", "Age", "Fare", "Embarked", "Title", "FamilySize", "IsAlone"]
+X = df[features]
+y = df["Survived"]
 
-df = df[['Survived', 'Pclass', 'Sex', 'Age', 'Fare', 'Embarked', 'Title', 'FamilySize', 'IsAlone']]
+# 4. Разделяем колонки по типам
+numeric_features = ["Pclass", "Age", "Fare", "FamilySize", "IsAlone"]
+categorical_features = ["Sex", "Embarked", "Title"]
 
-df=pd.get_dummies(df, columns=['Sex', 'Embarked', 'Title'], drop_first=False)
-
-X=df.drop(columns=['Survived'])
-y=df['Survived']
-
-pipe= Pipeline([
-    ('scaler', StandardScaler()),
-    ('model', LogisticRegression(max_iter=1000)),
+# 5. Собираем ветки препроцессинга
+numeric_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("scaler", StandardScaler())
 ])
 
-pipe.fit(X, y)
+categorical_pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="most_frequent")),
+    ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+])
 
-import os
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", numeric_pipeline, numeric_features),
+        ("cat", categorical_pipeline, categorical_features)
+    ]
+)
+
+# 6. Полный монолитный пайплайн: Препроцессинг + Модель
+full_pipeline = Pipeline([
+    ("preprocessor", preprocessor),
+    ("model", LogisticRegression(max_iter=1000, random_state=42))
+])
+
+# 7. Обучаем ВСЁ разом
+full_pipeline.fit(X, y)
+
+# 8. Сохраняем ТОЛЬКО ОДИН файл модели
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-joblib.dump(pipe, os.path.join(BASE_DIR, "model.joblib"))
-joblib.dump(list(X.columns), os.path.join(BASE_DIR, "columns.joblib"))
+model_path = os.path.join(BASE_DIR, "model_pipeline.joblib")
+joblib.dump(full_pipeline, model_path)
 
-print('Модель сохранена: model.joblib')
-print('Колонки сохранены: columns.joblib')
-print('Признаков:', X.shape[1])
+print(f"✅ Монолитный Pipeline успешно сохранен в: {model_path}")
+print("Файл columns.joblib больше не требуется!")
